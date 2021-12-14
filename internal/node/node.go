@@ -30,31 +30,48 @@ const (
 var (
 	// ErrNotLeaderRecv indicates that a client attempted to make a write to a
 	// node that is not currently the leader of the cluster
+	//
+	// client 试图对非 leader 节点进行写操作
 	ErrNotLeaderRecv = errors.New("Cannot accept writes if not leader")
 
 	// ErrNotLeaderSend indicates that a server attempted to send an append
 	// request while it is not the leader of the cluster
+	//
+	// 非 leader 节点试图发送 "Append Log" 请求
 	ErrNotLeaderSend = errors.New("Cannot send log append request if not leader")
 
 	// ErrExpiredTerm indicates that an append request was generated for a past
 	// term, so it should not be sent
+	//
+	// 发送过期的 Append Log 请求
 	ErrExpiredTerm = errors.New("Do not send append requests for expired terms")
 
 	// ErrAppendFailed indicates that an append job ran out of retry attempts
 	// without successfully appending to a majority of nodes
+	//
+	// 发送 Append Log 请求超过最大重试次数
 	ErrAppendFailed = errors.New("Failed to append logs to a majority of nodes")
 
 	// ErrCommitFailed indicates that the leader's commit index after append
 	// is less than the index of the record being added
+	//
+	// ??? leader 在 append 之后的 commit 索引小于正在添加的记录的索引
+	//
 	ErrCommitFailed = errors.New("Failed to commit record")
 
 	// ErrAppendRangeMet indicates that reverse-iteration has reached the
 	// beginning of the log and still not gotten a response--aborting
+	//
+	// ???
 	ErrAppendRangeMet = errors.New("Append range reached, not trying again")
 )
 
+
+
 // A ForeignNode is another member of the cluster, with connections needed
 // to manage gRPC interaction with that node and track recent availability
+//
+// ForeignNode 是集群中的另一个成员，通过 Connection 来管理 gRPC 交互并跟踪其可用性。
 type ForeignNode struct {
 	Connection *grpc.ClientConn
 	Client     raft.RaftClient
@@ -65,8 +82,12 @@ type ForeignNode struct {
 
 // NewForeignNode constructs a ForeignNode from an address ("host:port")
 func NewForeignNode(address string) (*ForeignNode, error) {
+
+	// 超时控制
 	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*100)
 	defer cancel()
+
+	// 建立连接
 	conn, err := grpc.DialContext(
 		ctx,
 		address,
@@ -76,8 +97,10 @@ func NewForeignNode(address string) (*ForeignNode, error) {
 		return nil, err
 	}
 
+	// 构造 RaftClient ，用于发送 RequestVote/AppendLogs 请求。
 	client := raft.NewRaftClient(conn)
 
+	//
 	return &ForeignNode{
 		Connection: conn,
 		Client:     client,
@@ -88,18 +111,20 @@ func NewForeignNode(address string) (*ForeignNode, error) {
 }
 
 // Close cleans up the gRPC connection with the foreign node
+// 关闭 grpc 连接
 func (f *ForeignNode) Close() {
 	f.Connection.Close()
 }
 
 // NodeConfig contains configurable properties for a node
+// 节点配置
 type NodeConfig struct {
-	Id         string
-	ClientAddr string
-	DataDir    string
-	TermFile   string
-	LogFile    string
-	NodeIds    []string
+	Id         string		// 节点 ID
+	ClientAddr string		// 节点 Addr
+	DataDir    string		// 数据目录
+	TermFile   string		// 临时目录
+	LogFile    string		// 日志文件
+	NodeIds    []string		// 节点列表
 }
 
 // ForeignNodeChecker functions are used to determine if a request comes from
@@ -107,6 +132,8 @@ type NodeConfig struct {
 // configuration file or other canonical record of membership, but can also
 // be mocked out for test to cause a Node to respond to RPC requests without
 // creating a full multi-node deployment.
+//
+// 检查请求是否来自集群中的合法节点。
 type ForeignNodeChecker func(string, map[string]*ForeignNode) bool
 
 // A Node is one member of a Raft cluster, with all state needed to operate the
@@ -115,6 +142,11 @@ type ForeignNodeChecker func(string, map[string]*ForeignNode) bool
 // that Candidate is a virtual role--a Candidate does not behave differently
 // from a Follower w.r.t. incoming messages, so the node will remain in the
 // Follower state while an election is in progress)
+//
+// Node 是 Raft 集群的一个成员，具有操作状态机所需的所有状态。
+// 在任何时候，它的角色可能是 Leader、Candidate 或 Follower，并且根据其角色有不同的职责。
+// 注意 Candidate 是一个虚拟角色，Candidate 与 Follower 收到消息后的行为没有区别，
+// 因此 Candidate 节点将在选举过程中保持 Follower 状态。
 type Node struct {
 	RaftNode         *raft.Node
 	State            Role
@@ -147,17 +179,24 @@ func (n *Node) RedirectLeader() string {
 }
 
 // WriteTerm persists the node's most recent term and vote
+//
+// 把 Term 信息序列化存储到文件。
 func WriteTerm(filename string, termRecord *raft.TermRecord) error {
+	// 序列化
 	out, err := proto.Marshal(termRecord)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to marshal term record")
 		return err
 	}
+
+	// 检查文件是否存在
 	_, err = os.Stat(filepath.Dir(filename))
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed stat")
 		return err
 	}
+
+	// 写入文件
 	if err = ioutil.WriteFile(filename, out, 0644); err != nil {
 		log.Fatal().Err(err).Msg("Failed to write term file")
 	}
@@ -166,34 +205,53 @@ func WriteTerm(filename string, termRecord *raft.TermRecord) error {
 
 // ReadTerm attempts to unmarshal and return a TermRecord from the specified
 // file, and if unable to do so returns an initialized TermRecord
+//
+//
 func ReadTerm(filename string) *raft.TermRecord {
-	record := &raft.TermRecord{Term: 0, VotedFor: nil}
+
+	// 空记录
+	record := &raft.TermRecord{
+		Term: 0,
+		VotedFor: nil,
+	}
+
+	// 检查文件是否存在
 	_, err := os.Stat(filename)
 	if err == nil {
+		// 读取并反序列化
 		termFile, _ := ioutil.ReadFile(filename)
 		if err = proto.Unmarshal(termFile, record); err != nil {
 			log.Warn().Err(err).Msg("Failed to unmarshal term file")
 		}
 	}
+
 	return record
 }
 
 // SetTerm records term and vote in non-volatile state
 func (n *Node) SetTerm(newTerm int64, votedFor *raft.Node) error {
+	// 更新内存变量
 	n.Term = newTerm
 	n.votedFor = votedFor
+
+	// 构造 TermRecord
 	vote := &raft.TermRecord{
-		Term:     newTerm,
-		VotedFor: votedFor}
+		Term:     newTerm,	// 任期
+		VotedFor: votedFor,	// 投票对象
+	}
+
+	// 落盘
 	return WriteTerm(n.config.TermFile, vote)
 }
 
 // WriteLogs persists the node's log
 func WriteLogs(filename string, logStore *raft.LogStore) error {
+	// 序列化
 	out, err := proto.Marshal(logStore)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to marshal logs")
 	}
+	// 落盘
 	if err = ioutil.WriteFile(filename, out, 0644); err != nil {
 		log.Fatal().Err(err).Msg("Failed to write log file")
 	}
@@ -203,7 +261,11 @@ func WriteLogs(filename string, logStore *raft.LogStore) error {
 // ReadLogs attempts to unmarshal and return a LogStore from the specified
 // file, and if unable to do so returns an empty LogStore
 func ReadLogs(filename string) *raft.LogStore {
-	logStore := &raft.LogStore{Entries: make([]*raft.LogRecord, 0, 0)}
+	// 空数据
+	logStore := &raft.LogStore{
+		Entries: make([]*raft.LogRecord, 0, 0),
+	}
+	// 反序列化并返回
 	_, err := os.Stat(filename)
 	if err != nil {
 	} else {
@@ -221,7 +283,9 @@ func ReadLogs(filename string) *raft.LogStore {
 // signal to the reset channel (read by the StateManager, which controls the
 // timers used for elections)
 func (n *Node) resetElectionTimer() {
+	// 更新状态为 follower
 	n.State = Follower
+	//
 	go func() {
 		n.Reset <- true
 	}()
@@ -244,16 +308,26 @@ func (n *Node) setLog(newLogs []*raft.LogRecord) (int64, error) {
 // log is successfully committed to a majority of nodes, or a majority of
 // nodes fail via explicit rejection or timeout (which should generally result
 // in an election)
+//
+// applyRecord 在日志中添加一条新记录，然后向集群中的其他节点发送 append-logs 请求。
+// 直到日志成功提交到大多数节点，或者大多数节点通过显式拒绝或超时（通常应该导致选举）失败，此方法才会返回。
 func (n *Node) applyRecord(record *raft.LogRecord) error {
+	// 非 leader 不许执行 Append Log 。
 	if n.State != Leader {
 		return ErrNotLeaderRecv
 	}
+
+	// 保存日志到本地
 	newEntries := append(n.Log.Entries, record)
+
+	//
 	idx, err := n.setLog(newEntries)
 	if err != nil {
 		log.Error().Err(err).Msg("applyRecord: Error setting log")
 		return err
 	}
+
+
 	// Try appending logs to other nodes, with 3 retries
 	currentTerm := n.Term
 	err = n.SendAppend(3, currentTerm)
@@ -261,6 +335,7 @@ func (n *Node) applyRecord(record *raft.LogRecord) error {
 		log.Error().Err(err).Msg("applyRecord: Error shipping log")
 		return err
 	}
+
 	// verify that n.CommitIndex >= idx
 	if n.CommitIndex < idx {
 		log.Error().Err(ErrCommitFailed).
@@ -269,6 +344,7 @@ func (n *Node) applyRecord(record *raft.LogRecord) error {
 			Msg("Commit index failed to update after append")
 		return ErrCommitFailed
 	}
+
 	// return once entry is applied to state machine or error
 	return err
 }
@@ -278,30 +354,31 @@ func (n *Node) applyRecord(record *raft.LogRecord) error {
 // Set appends a write entry to the log record, and returns once the update is
 // applied to the state machine or an error is generated
 func (n *Node) Set(key string, value string) error {
-	log.Info().
-		Str("key", key).
-		Str("value", value).
-		Msg("Set")
+	log.Info().Str("key", key).Str("value", value).Msg("Set")
+
+	// 构造日志
 	record := &raft.LogRecord{
 		Term:   n.Term,
 		Action: raft.LogRecord_SET,
 		Key:    key,
-		Value:  value}
+		Value:  value,
+	}
 	n.Lock()
 	defer n.Unlock()
+
+	// 应用日志
 	return n.applyRecord(record)
 }
 
 // Delete appends a delete entry to the log record, and returns once the update
 // is applied to the state machine or an error is generated
 func (n *Node) Delete(key string) error {
-	log.Info().
-		Str("key", key).
-		Msg("Delete")
+	log.Info().Str("key", key).Msg("Delete")
 	record := &raft.LogRecord{
 		Term:   n.Term,
 		Action: raft.LogRecord_DEL,
-		Key:    key}
+		Key:    key,
+	}
 	n.Lock()
 	defer n.Unlock()
 	return n.applyRecord(record)
@@ -309,21 +386,28 @@ func (n *Node) Delete(key string) error {
 
 // requestVote sends a request for vote to a single other node (see DoElection)
 func (n *Node) requestVote(host string) (*raft.VoteReply, error) {
+	// 超时控制
 	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*4)
 	defer cancel()
 
+	//
 	lastLogIndex := int64(len(n.Log.Entries)) - 1
+
+	//
 	var lastLogTerm int64
 	if lastLogIndex >= 0 {
 		lastLogTerm = n.Log.Entries[lastLogIndex].Term
 	} else {
 		lastLogTerm = 0
 	}
+
+	// 构造投票请求
 	voteRequest := &raft.VoteRequest{
 		Term:         n.Term,
 		Candidate:    n.RaftNode,
 		LastLogIndex: lastLogIndex,
-		LastLogTerm:  lastLogTerm}
+		LastLogTerm:  lastLogTerm,
+	}
 
 	vote, err := n.otherNodes[host].Client.RequestVote(ctx, voteRequest)
 	if err != nil {
@@ -348,37 +432,50 @@ func (n *Node) DoElection() bool {
 	log.Trace().Msg("Starting Election")
 	n.SetTerm(n.Term+1, n.RaftNode)
 
+	// 总节点数
 	numNodes := len(n.otherNodes) + 1
+	// 满足半数
 	majority := (numNodes / 2) + 1
+
+
 	var success bool
 
-	log.Info().
-		Int64("Term", n.Term).
+	log.Info().Int64("Term", n.Term).
 		Int("clusterSize", numNodes).
 		Int("needed", majority).
 		Msg("Becoming candidate")
 
+	// 同意节点数
 	numVotes := 1
+	// 看到的最大 term
 	maxTermSeen := n.Term
+	// 看到的最大 term 对应的 nodes
 	maxTermSeenSource := n.votedFor
 
 	var wg sync.WaitGroup
 	wg.Add(len(n.otherNodes))
 
+	//
 	for k := range n.otherNodes {
 		// if needed for performance, figure out how to collect the term responses in a thread-safe way
 		go func(k string) {
 			defer wg.Done()
 
+			// 请求投票
 			vote, err := n.requestVote(k)
-			log.Trace().Msg("got a vote")
 			if err != nil {
 				return
 			}
+
+			log.Trace().Msg("got a vote")
+
+			// 同意
 			if vote.VoteGranted {
 				log.Trace().Msg("it's a 'yay'")
 				numVotes++
+			// 拒绝
 			} else {
+				// 如果该节点返回了更大的 term ，就记录该 term 。
 				if vote.Term > maxTermSeen {
 					maxTermSeen = vote.Term
 					maxTermSeenSource = vote.Node
@@ -389,38 +486,39 @@ func (n *Node) DoElection() bool {
 
 	wg.Wait()
 
-	voteLog := log.Info().
-		Int("needed", majority).
-		Int("got", numVotes)
+	voteLog := log.Info().Int("needed", majority).Int("got", numVotes)
 
+	// 若不满足多数同意
 	if numVotes < majority {
-		voteLog.
-			Bool("success", false).
-			Int64("term", n.Term).
-			Msg("Election failed")
+		voteLog.Bool("success", false).Int64("term", n.Term).Msg("Election failed")
 		success = false
+		// 如果看到更大的 term ，就更新 Term 到磁盘
 		if maxTermSeen > n.Term {
-			log.Info().
-				Int64("max response term", maxTermSeen).
+			log.Info().Int64("max response term", maxTermSeen).
 				Str("other node", maxTermSeenSource.Id).
 				Msg("Updating term to max seen")
 			n.SetTerm(maxTermSeen, maxTermSeenSource)
 		}
+	// 若满足多数同意
 	} else {
-		voteLog.
-			Bool("success", true).
-			Int64("term", n.Term).
-			Msg("Election succeeded")
+		voteLog.Bool("success", true).Int64("term", n.Term).Msg("Election succeeded")
+		// 当前节点仍为 Leader
 		n.State = Leader
+		// 成功
 		success = true
+
 		// StateManager grace window job sets this back to true
+		//
 		n.AllowVote = false
 
+		// 更新每个节点的待同步日志序号
 		for k := range n.otherNodes {
 			n.otherNodes[k].MatchIndex = -1
 			n.otherNodes[k].NextIndex = int64(len(n.Log.Entries))
 		}
 	}
+
+
 	return success
 }
 
@@ -430,15 +528,20 @@ func (n *Node) DoElection() bool {
 func (n *Node) commitRecords() {
 	log.Trace().Msg("commitRecords")
 
+	// 节点总数
 	numNodes := len(n.otherNodes)
+	// 半数节点
 	majority := (numNodes / 2) + 1
 	log.Trace().Msgf("Need to apply message to %d nodes", majority)
 
+	//
 	lastIdx := int64(len(n.Log.Entries) - 1)
 	log.Trace().
 		Int64("lastIndex", lastIdx).
 		Int64("CommitIndex", n.CommitIndex).
 		Msgf("Checking for update to commit index")
+
+	//
 	for lastIdx > n.CommitIndex {
 		count := 1
 		for k := range n.otherNodes {
@@ -539,11 +642,13 @@ func (n *Node) requestAppend(host string, term int64) error {
 			}
 			n.otherNodes[host].Available = false
 			return ErrAppendRangeMet
+
 			// todo: would it be viable for AppendReply to include the other
 			// node's log index, so this could fast-forward to the correct
 			// index, rather than recursing possibly down the whole list?
 			// This implementation will blow the stack fast with any kind of
 			// realistic history when you add a fresh node
+
 		}
 	}
 	n.otherNodes[host].Available = false
@@ -612,7 +717,8 @@ func NewNodeConfig(dataDir string, addr, clientAddr string, nodeIds []string) No
 		DataDir:    dataDir,
 		TermFile:   filepath.Join(dataDir, "term"),
 		LogFile:    filepath.Join(dataDir, "raftlog"),
-		NodeIds:    nodeIds}
+		NodeIds:    nodeIds,
+	}
 }
 
 // checkForeignNode verifies that a node is a known member of the cluster (this
@@ -692,15 +798,19 @@ func (n *Node) availability() (int, int) {
 // candidateLogUpToDate checks if a candidate's log index is at least as high as
 // the node's commit index (e.g.: candidate has all known committed entries), and
 // that the
+//
+// CandidateLogUpToDate 检查候选人的日志索引是否至少与节点的提交索引一样高（例如：候选人具有所有已知的提交条目）
 func (n *Node) candidateLogUpToDate(cLogIndex int64, cLogTerm int64) bool {
+
 	indexGreater := cLogIndex > n.CommitIndex
+
 	indexEqual := cLogIndex == n.CommitIndex
+
 	bothEmpty := cLogIndex == -1 && n.CommitIndex == -1
+
 	indexPresent := cLogIndex < int64(len(n.Log.Entries))
 
-	upToDate := indexGreater ||
-		bothEmpty ||
-		(indexEqual && cLogTerm == n.Log.Entries[cLogIndex].Term)
+	upToDate := indexGreater || bothEmpty || (indexEqual && cLogTerm == n.Log.Entries[cLogIndex].Term)
 
 	if !upToDate {
 		failLog := log.Debug().
@@ -721,47 +831,65 @@ func (n *Node) HandleVote(req *raft.VoteRequest) *raft.VoteReply {
 	log.Info().Msgf("%s proposed term: %d", req.Candidate.Id, req.Term)
 	var vote bool
 	var msg string
+
+	// 旧的任期，直接拒绝
 	if req.Term < n.Term {
 		vote = false
 		msg = "Past term vote received"
+	// 相同任期，拒绝投票，并检查是否发生任期冲突
 	} else if req.Term == n.Term {
 		vote = false
 		msg = "Current term vote received"
 		// If this node is the leader, and a vote request is received for the
 		// current term, the current term should be increased because the other
 		// node will have voted for itself and therefore not accept appends from
-		// this leader (this happens when a previous leader restarts and then
-		// comes back online and restarts an election for the current term, having
-		// not received an append request from this leader in its initial election
-		// window--shouldn't happen often, but if it does it would otherwise result
-		// in an otherwise unnecessary election)
+		// this leader .
+		//
+		// this happens when a previous leader restarts and then comes back online
+		// and restarts an election for the current term, having not received an
+		// append request from this leader in its initial election window -- shouldn't
+		// happen often, but if it does it would otherwise result in an otherwise
+		// unnecessary election.
+		//
+		// 如果此节点是 Leader 状态，并且收到当前 term 的投票请求，则应增加任期，并拒绝当前 vote 选举请求。
 		if n.State == Leader {
+			// 更新 term 信息
 			msg = msg + ", incrementing term"
 			n.SetTerm(n.Term+1, n.RaftNode)
 		}
+	// 检查是否为合法节点
 	} else if !n.CheckForeignNode(req.Candidate.Id, n.otherNodes) {
 		vote = false
 		msg = "Unknown foreign node: " + req.Candidate.Id
+	//
 	} else if !n.candidateLogUpToDate(req.LastLogIndex, req.LastLogTerm) {
 		vote = false
 		msg = "Candidate log not up to date"
+	// 是否在静默期，禁止投票
 	} else if !n.AllowVote {
 		vote = false
 		msg = "Leader still in grace period"
+	// 同意投票
 	} else {
 		msg = "Voting yay"
 		vote = true
+		// 重置定时器
 		n.resetElectionTimer()
+		// 记录投票状态
 		n.SetTerm(req.Term, req.Candidate)
 	}
+
 	log.Info().
 		Int64("Term", n.Term).
 		Bool("Granted", vote).
 		Msg(msg)
+
+	// 返回投票响应
 	return &raft.VoteReply{
-		Term:        n.Term,
-		VoteGranted: vote,
-		Node:        n.RaftNode}
+		Term:        n.Term,		// 任期
+		VoteGranted: vote,			// 投票状态
+		Node:        n.RaftNode,	// 节点信息
+	}
 }
 
 // validateAppend performs all checks for valid append request
@@ -825,8 +953,11 @@ func (n *Node) applyCommittedLogs(commitIdx int64) {
 		Int64("current", n.CommitIndex).
 		Int64("leader", commitIdx).
 		Msg("apply commits")
+
 	if commitIdx > n.CommitIndex {
+
 		// ensure we don't run over the end of the log
+		//
 		lastIndex := int64(len(n.Log.Entries))
 		if commitIdx > lastIndex {
 			commitIdx = lastIndex
@@ -854,9 +985,11 @@ func (n *Node) applyCommittedLogs(commitIdx int64) {
 // checkPrevious returns true if Node.logs contains an entry at the specified
 // index with the specified term, otherwise false
 func (n *Node) checkPrevious(prevIndex int64, prevTerm int64) bool {
+
 	if prevIndex < 0 {
 		return true
 	}
+
 	inRange := prevIndex < int64(len(n.Log.Entries))
 	matches := n.Log.Entries[prevIndex].Term == prevTerm
 	return inRange && matches
@@ -876,7 +1009,6 @@ func (n *Node) HandleAppend(req *raft.AppendRequest) *raft.AppendReply {
 		success = false
 	} else {
 		// Valid request, and all required logs present
-
 		if len(req.Entries) > 0 {
 			n.Log = reconcileLogs(n.Log, req)
 			n.setLog(n.Log.Entries)

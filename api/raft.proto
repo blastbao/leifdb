@@ -5,28 +5,34 @@ package raft;
 option go_package = "github.com/btmorr/leifdb/internal/raft";
 
 service Raft {
+	// 请求投票
 	rpc RequestVote (VoteRequest) returns (VoteReply) {}
+	// 同步日志
 	rpc AppendLogs (AppendRequest) returns (AppendReply) {}
 }
 
+// 节点
 message Node {
-	string id = 1;
-	string clientAddr = 2;
+	string id = 1;					// 节点 ID
+	string clientAddr = 2;	// 节点 Addr
 }
 
+// 投票请求
 message VoteRequest {
-	int64 term = 1;
-	Node candidate = 2;
-	int64 lastLogIndex = 3;
-	int64 lastLogTerm = 4;
+	int64 term = 1;					// 任期
+	Node candidate = 2;			// 候选节点
+	int64 lastLogIndex = 3;	// 日志序号
+	int64 lastLogTerm = 4;	// 日志期号
 }
 
+// 投票响应
 message VoteReply {
 	int64 term = 1;
 	bool voteGranted = 2;
 	Node node = 3;
 }
 
+// 追加请求
 message AppendRequest {
 	int64 term = 1;
 	Node leader = 2;
@@ -34,30 +40,37 @@ message AppendRequest {
 	int64 prevLogTerm = 4;
 	int64 leaderCommit = 5;
 	repeated LogRecord entries = 6;
-
 }
 
+// 追加响应
 message AppendReply {
 	int64 term = 1;
 	bool success = 2;
 }
 
+// 日志记录
 message LogRecord {
+	// 行为
 	enum Action {
 		SET = 0;
 		DEL = 1;
 	}
-
+	// 任期
 	int64 term = 1;
+	// 行为
 	Action action = 2;
+	// 键
 	string key = 3;
+	// 值
 	string value = 4;
 }
 
+// 日志记录集合
 message LogStore {
 	repeated LogRecord entries = 1;
 }
 
+// 任期记录
 message TermRecord {
 	int64 term = 1;
 	Node votedFor = 2;

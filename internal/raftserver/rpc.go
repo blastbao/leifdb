@@ -16,17 +16,13 @@ type server struct {
 }
 
 // RequestVote handles RPC vote requests from other nodes
-func (s *server) RequestVote(
-	ctx context.Context,
-	v *raft.VoteRequest) (*raft.VoteReply, error) {
+func (s *server) RequestVote(ctx context.Context, v *raft.VoteRequest) (*raft.VoteReply, error) {
 	log.Debug().Msgf("Received vote request: %v", v)
 	return s.Node.HandleVote(v), nil
 }
 
 // AppendLogs handles RPC log-append requests from other nodes
-func (s *server) AppendLogs(
-	ctx context.Context,
-	a *raft.AppendRequest) (*raft.AppendReply, error) {
+func (s *server) AppendLogs(ctx context.Context, a *raft.AppendRequest) (*raft.AppendReply, error) {
 	log.Debug().Msgf("Received append request: %v", a)
 	return s.Node.HandleAppend(a), nil
 }
